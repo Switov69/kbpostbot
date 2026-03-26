@@ -4,7 +4,7 @@
  */
 
 const TelegramBot = require('node-telegram-bot-api');
-const { Pool } = require('pg'); 
+const { Pool } = require('pg');
 const https = require('https');
 const express = require('express');
 
