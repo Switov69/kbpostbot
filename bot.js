@@ -9,7 +9,7 @@ const path = require('path');
 const https = require('https');
 
 // === НАСТРОЙКИ ===
-const BOT_TOKEN = '8656385676:AAGHHDZYqgmZVoaSzZaMadFeTjjoU3ieLb4';
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const WEBAPP_URL = 'https://kbpost.vercel.app';
 const API_BASE   = 'https://kbpost.vercel.app/api';
 const BOT_SECRET = process.env.BOT_SECRET || '';
