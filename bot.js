@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 const https = require('https');
 const express = require('express');
 
-// === 1. KEEP-ALIVE СЕРВЕР ДЛЯ RENDER ===
+// === 1. KEEP-ALIVE ===
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('KBPOST Bot Status: Online'));
