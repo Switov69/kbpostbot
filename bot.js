@@ -7,6 +7,19 @@ const TelegramBot = require('node-telegram-bot-api');
 const Database = require('better-sqlite3');
 const path = require('path');
 const https = require('https');
+const express = require('express');
+
+// === KEEP-ALIVE СЕРВЕР ===
+const app = express();
+const PORT = process.env.PORT || 3000; 
+
+app.get('/', (req, res) => {
+  res.send('KBPOST Bot is running 24/7');
+});
+
+app.listen(PORT, () => {
+  console.log(`Keep-alive server is running on port ${PORT}`);
+});
 
 // === НАСТРОЙКИ ===
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
