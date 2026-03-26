@@ -17,7 +17,6 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 // === 2. НАСТРОЙКИ (Environment Variables) ===
 const BOT_TOKEN = process.env.BOT_TOKEN || ''; 
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://kbpost.vercel.app';
-// API теперь находится по одному адресу
 const API_URL    = `${WEBAPP_URL}/api/auth`; 
 const BOT_SECRET = process.env.BOT_SECRET || ''; 
 const ADMIN_IDS  = [1746547600, 1946939976];
