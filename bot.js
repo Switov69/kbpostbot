@@ -17,7 +17,7 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 // === 2. НАСТРОЙКИ (Environment Variables) ===
 const BOT_TOKEN = process.env.BOT_TOKEN || ''; 
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://kbpost.vercel.app';
-const API_BASE   = `${WEBAPP_URL}/api`;
+const API_URL    = `${WEBAPP_URL}/api/auth`; // Путь к объединенному API
 const BOT_SECRET = process.env.BOT_SECRET || ''; 
 const ADMIN_IDS  = [1746547600, 1946939976];
 
@@ -27,7 +27,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// === 4. ФУНКЦИИ БД (Асинхронные) ===
+// === 4. ФУНКЦИИ БД ===
 async function saveSession(tgUsername, chatId) {
   if (!tgUsername) return;
   const user = tgUsername.toLowerCase().replace('@', '');
@@ -54,10 +54,16 @@ async function getAllSessions() {
   } catch (err) { return []; }
 }
 
-// === 5. HTTP HELPER ДЛЯ API ===
+// === 5. HTTP HELPER ДЛЯ API (FIXED FOR UNIFIED API) ===
 function createPendingToken(actionType, data) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ actionType, data });
+    // Теперь передаем action: 'createToken' внутри тела запроса
+    const body = JSON.stringify({ 
+      action: 'createToken', 
+      actionType, 
+      data 
+    });
+
     const options = {
       method: 'POST',
       headers: {
@@ -66,14 +72,18 @@ function createPendingToken(actionType, data) {
         'x-bot-secret': BOT_SECRET,
       },
     };
-    const req = https.request(`${API_BASE}/auth/create-token`, options, (res) => {
+
+    const req = https.request(API_URL, options, (res) => {
       let raw = '';
       res.on('data', chunk => raw += chunk);
       res.on('end', () => {
         try {
           const parsed = JSON.parse(raw);
-          if (res.statusCode === 201 && parsed.token) resolve(parsed.token);
-          else reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          if ((res.statusCode === 201 || res.statusCode === 200) && parsed.token) {
+            resolve(parsed.token);
+          } else {
+            reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          }
         } catch { reject(new Error('Invalid JSON')); }
       });
     });
@@ -94,8 +104,9 @@ function generateTicketId() {
   return id;
 }
 
+// Кнопка с режимом Fullscreen
 function makeWebAppButton(text, url) {
-  return { text, web_app: { url } };
+  return { text, web_app: { url, mode: 'fullscreen' } };
 }
 
 // === 6. КОМАНДЫ ===
@@ -106,15 +117,17 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
   if (tgUser) await saveSession(tgUser, chatId);
 
+  // Обработка сброса пароля
   if (param.startsWith('reset_')) {
     const user = decodeURIComponent(param.slice(6)).trim();
     userStates[chatId] = { state: 'awaiting_new_password', siteUsername: user };
     return bot.sendMessage(chatId, `🔑 <b>Сброс пароля:</b> <code>${user}</code>\nВведите новый пароль (мин. 4 символа):`, { parse_mode: 'HTML' });
   }
 
+  // Обработка привязки аккаунта
   if (param.startsWith('link_')) {
     const user = decodeURIComponent(param.slice(5).split('_').slice(0, -1).join('_')).trim();
-    if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в Telegram!');
+    if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в настройках Telegram!');
     try {
       const token = await createPendingToken('link_tg', { siteUsername: user, tgUsername: tgUser, chatId: String(chatId) });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=link`;
@@ -122,12 +135,18 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [[makeWebAppButton('✅ Подтвердить', url)]] }
       });
-    } catch (e) { return bot.sendMessage(chatId, '❌ Ошибка API.'); }
+    } catch (e) { 
+      console.error('API Error:', e.message);
+      return bot.sendMessage(chatId, '❌ Ошибка API. Убедитесь, что сайт и база активны.'); 
+    }
   }
 
-  bot.sendMessage(chatId, `📦 <b>kbpost</b> — Онлайн\n\nНажмите кнопку для входа:`, {
+  // Стандартное приветствие
+  bot.sendMessage(chatId, `📦 <b>kbpost</b> — Онлайн\n\nНажмите кнопку для входа.\n<i>Нужна помощь? Используйте /support</i>`, {
     parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[makeWebAppButton('📦 Открыть приложение', WEBAPP_URL)]] }
+    reply_markup: { 
+        inline_keyboard: [[makeWebAppButton('📦 Открыть приложение', WEBAPP_URL)]] 
+    }
   });
 });
 
@@ -157,6 +176,7 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
 
+  // Рассылка
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_broadcast_content') {
     delete adminStates[chatId];
     const sessions = await getAllSessions();
@@ -165,6 +185,7 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, '🏁 Готово!');
   }
 
+  // Ответ админа
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_answer') {
     const { ticketId } = adminStates[chatId];
     const t = supportTickets[ticketId];
@@ -177,10 +198,12 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Смена пароля
   if (userStates[chatId]?.state === 'awaiting_new_password') {
     const user = userStates[chatId].siteUsername;
+    if (text.length < 4) return bot.sendMessage(chatId, '❌ Пароль слишком короткий!');
     try {
-      const token = await createPendingToken('reset_password', { siteUsername: user });
+      const token = await createPendingToken('reset_password', { siteUsername: user, newPassword: text });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=reset`;
       bot.sendMessage(chatId, `✅ Пароль готов к применению:`, {
         parse_mode: 'HTML',
@@ -191,6 +214,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Поддержка
   if (userStates[chatId]?.state === 'awaiting_support_reason') {
     const tid = generateTicketId();
     const uname = msg.from.username ? `@${msg.from.username}` : 'скрыт';
@@ -201,7 +225,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// === 8. УВЕДОМЛЕНИЯ (Экспорт) ===
+// === 8. УВЕДОМЛЕНИЯ ===
 async function sendNotification(telegramUsername, message) {
   const session = await getSession(telegramUsername);
   if (session) {
@@ -212,19 +236,4 @@ async function sendNotification(telegramUsername, message) {
   }
 }
 
-function notifyParcelCreated(sTg, rTg, ttn) {
-  sendNotification(sTg, `📤 Вы создали посылку <code>${ttn}</code>`);
-  sendNotification(rTg, `📥 Для вас создана посылка <code>${ttn}</code>`);
-}
-
-function notifyStatusChange(sTg, rTg, ttn, status) {
-  const msg = `🔄 Статус посылки <code>${ttn}</code>: <b>${status}</b>`;
-  sendNotification(sTg, msg); sendNotification(rTg, msg);
-}
-
-function notifyPayment(sTg, rTg, ttn, sum) {
-  sendNotification(rTg, `💳 Оплата подтверждена: <code>${ttn}</code> (${sum} кбк)`);
-  sendNotification(sTg, `💰 Получен перевод: <code>${ttn}</code> (${sum} кбк)`);
-}
-
-module.exports = { sendNotification, notifyParcelCreated, notifyStatusChange, notifyPayment };
+console.log('Бот успешно запущен и готов к работе!');
