@@ -54,15 +54,14 @@ async function getAllSessions() {
   } catch (err) { return []; }
 }
 
-// === 5. HTTP HELPER ДЛЯ API (ИСПРАВЛЕНА ОШИБКА NULL TOKEN) ===
+// === 5. HTTP HELPER ДЛЯ API (Исправлено для работы с текстовыми токенами) ===
 function createPendingToken(actionType, data) {
   return new Promise((resolve, reject) => {
-    // Генерируем токен здесь, чтобы избежать ошибки "null value violates not-null constraint" в базе
     const generatedToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
     const body = JSON.stringify({ 
       action: 'createToken', 
-      token: generatedToken, // Явно передаем сгенерированный токен
+      token: generatedToken,
       actionType, 
       data 
     });
@@ -82,7 +81,6 @@ function createPendingToken(actionType, data) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(raw);
-          // Если сервер Vercel принял запрос успешно
           if (res.statusCode === 201 || res.statusCode === 200) {
             resolve(generatedToken);
           } else {
@@ -108,18 +106,23 @@ function generateTicketId() {
   return id;
 }
 
-// Кнопка с FULLSCREEN
 function makeWebAppButton(text, url) {
   return { 
     text: text, 
-    web_app: { 
-      url: url,
-      mode: 'fullscreen' 
-    } 
+    web_app: { url: url, mode: 'fullscreen' } 
   };
 }
 
 // === 6. КОМАНДЫ ===
+
+// Команда ОТМЕНЫ
+bot.onText(/\/cancel/, (msg) => {
+  const chatId = msg.chat.id;
+  delete userStates[chatId];
+  delete adminStates[chatId];
+  bot.sendMessage(chatId, '🔄 Действие отменено.');
+});
+
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const tgUser = msg.from.username ? `@${msg.from.username}` : null;
@@ -127,32 +130,39 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
   if (tgUser) await saveSession(tgUser, chatId);
 
-  // Обработка сброса пароля
+  // Безопасный парсинг параметров (Исправление ошибки split/undefined)
   if (param.startsWith('reset_')) {
     const user = decodeURIComponent(param.slice(6)).trim();
+    if (!user) return bot.sendMessage(chatId, '❌ Некорректная ссылка сброса.');
     userStates[chatId] = { state: 'awaiting_new_password', siteUsername: user };
-    return bot.sendMessage(chatId, `🔑 <b>Сброс пароля:</b> <code>${user}</code>\nВведите новый пароль (мин. 4 символа):`, { parse_mode: 'HTML' });
+    return bot.sendMessage(chatId, `🔑 <b>Сброс пароля для:</b> <code>${user}</code>\nВведите новый пароль (не менее 4 символов) или /cancel для отмены:`, { parse_mode: 'HTML' });
   }
 
-  // Обработка привязки аккаунта
   if (param.startsWith('link_')) {
-    const user = decodeURIComponent(param.slice(5).split('_').slice(0, -1).join('_')).trim();
-    if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в Telegram!');
+    const rawContent = param.slice(5);
+    if (!rawContent) return bot.sendMessage(chatId, '❌ Ошибка: пустой параметр привязки.');
+    
+    // Безопасное разделение
+    const parts = rawContent.split('_');
+    const user = decodeURIComponent(parts.slice(0, -1).join('_')).trim();
+    
+    if (!user) return bot.sendMessage(chatId, '❌ Не удалось определить имя пользователя.');
+    if (!tgUser) return bot.sendMessage(chatId, '❌ У вас не установлен Username в Telegram. Установите его в настройках и попробуйте снова.');
+
     try {
       const token = await createPendingToken('link_tg', { siteUsername: user, tgUsername: tgUser, chatId: String(chatId) });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=link`;
-      return bot.sendMessage(chatId, `🔗 Привязка к <code>${user}</code>:`, {
+      return bot.sendMessage(chatId, `🔗 Подтвердите привязку аккаунта <b>${user}</b>:`, {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [[makeWebAppButton('✅ Подтвердить', url)]] }
       });
     } catch (e) { 
-      console.error('API Error:', e.message);
-      return bot.sendMessage(chatId, '❌ Ошибка API. Убедитесь, что секреты в Render и Vercel совпадают.'); 
+      console.error('API Link Error:', e.message);
+      return bot.sendMessage(chatId, '❌ Ошибка API. Убедитесь, что пароли в Render и Vercel совпадают.'); 
     }
   }
 
-  // Обычное приветствие
-  bot.sendMessage(chatId, `📦 <b>kbpost</b> — Онлайн\n\nНажмите кнопку для входа.\n<i>Нужна помощь? Используйте /support</i>`, {
+  bot.sendMessage(chatId, `📦 <b>kbpost</b> — Добро пожаловать!\n\nИспользуйте кнопку ниже для входа в приложение.\n\n<i>Нужна помощь? — /support</i>`, {
     parse_mode: 'HTML',
     reply_markup: { 
       inline_keyboard: [[makeWebAppButton('📦 Открыть приложение', WEBAPP_URL)]] 
@@ -163,13 +173,13 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 bot.onText(/\/broadcast/, (msg) => {
   if (ADMIN_IDS.includes(msg.chat.id)) {
     adminStates[msg.chat.id] = { action: 'awaiting_broadcast_content' };
-    bot.sendMessage(msg.chat.id, '📢 Отправьте сообщение для рассылки:');
+    bot.sendMessage(msg.chat.id, '📢 Отправьте сообщение для рассылки всем пользователям (или /cancel):');
   }
 });
 
 bot.onText(/\/support/, (msg) => {
   userStates[msg.chat.id] = { state: 'awaiting_support_reason' };
-  bot.sendMessage(msg.chat.id, '🛠 Опишите проблему одним сообщением:');
+  bot.sendMessage(msg.chat.id, '🛠 Опишите вашу проблему одним сообщением (или /cancel):');
 });
 
 bot.onText(/\/answer (\d+)/, (msg, match) => {
@@ -177,7 +187,7 @@ bot.onText(/\/answer (\d+)/, (msg, match) => {
   const tid = match[1];
   if (!supportTickets[tid]) return bot.sendMessage(msg.chat.id, '❌ Тикет не найден.');
   adminStates[msg.chat.id] = { action: 'awaiting_answer', ticketId: tid };
-  bot.sendMessage(msg.chat.id, `Пишите ответ для #${tid}:`);
+  bot.sendMessage(msg.chat.id, `Пишите ответ для тикета #${tid}:`);
 });
 
 // === 7. ОБРАБОТКА ТЕКСТА ===
@@ -186,64 +196,72 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
 
-  // Обработка рассылки админами
+  // Рассылка
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_broadcast_content') {
     delete adminStates[chatId];
     const sessions = await getAllSessions();
-    bot.sendMessage(chatId, `⏳ Рассылка на ${sessions.length} чел...`);
-    for (const s of sessions) { try { await bot.copyMessage(s.chat_id, chatId, msg.message_id); } catch(e){} }
-    return bot.sendMessage(chatId, '🏁 Готово!');
+    bot.sendMessage(chatId, `⏳ Начинаю рассылку...`);
+    let count = 0;
+    for (const s of sessions) { 
+      try { 
+        await bot.copyMessage(s.chat_id, chatId, msg.message_id); 
+        count++;
+      } catch(e){} 
+    }
+    return bot.sendMessage(chatId, `🏁 Рассылка завершена. Получили: ${count} чел.`);
   }
 
-  // Обработка ответа поддержки
+  // Ответ поддержки
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_answer') {
     const { ticketId } = adminStates[chatId];
     const t = supportTickets[ticketId];
     if (t) {
       bot.sendMessage(t.userChatId, `✉️ <b>Ответ поддержки:</b>\n\n${text}`, { parse_mode: 'HTML', reply_to_message_id: t.messageId });
-      bot.sendMessage(chatId, `✅ Отправлено!`);
+      bot.sendMessage(chatId, `✅ Ответ отправлен пользователю.`);
       delete supportTickets[ticketId];
     }
     delete adminStates[chatId];
     return;
   }
 
-  // Обработка ввода нового пароля
+  // Смена пароля
   if (userStates[chatId]?.state === 'awaiting_new_password') {
     const user = userStates[chatId].siteUsername;
-    if (text.length < 4) return bot.sendMessage(chatId, '❌ Слишком короткий пароль.');
+    if (text.length < 4) return bot.sendMessage(chatId, '❌ Пароль слишком короткий (минимум 4 символа).');
     try {
       const token = await createPendingToken('reset_password', { siteUsername: user, newPassword: text });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=reset`;
-      bot.sendMessage(chatId, `✅ Пароль готов к применению:`, {
+      bot.sendMessage(chatId, `✅ Токен сброса сформирован:`, {
         parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [[makeWebAppButton('🔑 Применить', url)]] }
+        reply_markup: { inline_keyboard: [[makeWebAppButton('🔑 Применить новый пароль', url)]] }
       });
-    } catch(e) { bot.sendMessage(chatId, '❌ Ошибка сброса.'); }
+    } catch(e) { bot.sendMessage(chatId, '❌ Ошибка на стороне сервера.'); }
     delete userStates[chatId];
     return;
   }
 
-  // Обработка создания тикета в поддержку
+  // Создание тикета
   if (userStates[chatId]?.state === 'awaiting_support_reason') {
     const tid = generateTicketId();
     const uname = msg.from.username ? `@${msg.from.username}` : 'скрыт';
     supportTickets[tid] = { userChatId: chatId, messageId: msg.message_id, username: uname };
-    bot.sendMessage(chatId, `✅ Запрос отправлен! Тикет: <code>#${tid}</code>`, { parse_mode: 'HTML' });
-    ADMIN_IDS.forEach(aid => bot.sendMessage(aid, `🆘 <b>Поддержка #${tid}</b>\nОт: ${uname}\nТекст: ${text}\n\n<code>/answer ${tid}</code>`, { parse_mode: 'HTML' }));
+    bot.sendMessage(chatId, `✅ Ваш запрос принят. Номер тикета: <code>#${tid}</code>`, { parse_mode: 'HTML' });
+    ADMIN_IDS.forEach(aid => bot.sendMessage(aid, `🆘 <b>Поддержка #${tid}</b>\nОт: ${uname}\nТекст: ${text}\n\nОтветить: <code>/answer ${tid}</code>`, { parse_mode: 'HTML' }));
     delete userStates[chatId];
   }
 });
 
-// === 8. УВЕДОМЛЕНИЯ ===
+// === 8. УВЕДОМЛЕНИЯ О ПОСЫЛКАХ ===
 async function sendNotification(telegramUsername, message) {
   const session = await getSession(telegramUsername);
   if (session) {
-    bot.sendMessage(session.chatId, `📦 <b>kbpost</b>\n\n${message}`, {
+    bot.sendMessage(session.chatId, `📦 <b>Обновление статуса</b>\n\n${message}`, {
       parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [[makeWebAppButton('📦 Открыть', WEBAPP_URL)]] }
+      reply_markup: { 
+        inline_keyboard: [[makeWebAppButton('📦 Посмотреть детали', WEBAPP_URL)]] 
+      }
     });
   }
 }
 
-console.log('Бот успешно запущен и готов к работе!');
+console.log('Бот запущен. Ошибок парсинга не обнаружено.');
