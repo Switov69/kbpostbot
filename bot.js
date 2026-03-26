@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 const https = require('https');
 const express = require('express');
 
-// === 1. KEEP-ALIVE ===
+// === 1. KEEP-ALIVE (Для Render) ===
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('KBPOST Bot Status: Online'));
@@ -54,12 +54,15 @@ async function getAllSessions() {
   } catch (err) { return []; }
 }
 
-// === 5. HTTP HELPER ДЛЯ API (ПОФИКШЕН) ===
+// === 5. HTTP HELPER ДЛЯ API (ИСПРАВЛЕНА ОШИБКА NULL TOKEN) ===
 function createPendingToken(actionType, data) {
   return new Promise((resolve, reject) => {
-    // Передаем action внутри body для универсального обработчика Vercel
+    // Генерируем токен здесь, чтобы избежать ошибки "null value violates not-null constraint" в базе
+    const generatedToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
     const body = JSON.stringify({ 
       action: 'createToken', 
+      token: generatedToken, // Явно передаем сгенерированный токен
       actionType, 
       data 
     });
@@ -79,8 +82,9 @@ function createPendingToken(actionType, data) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(raw);
-          if ((res.statusCode === 201 || res.statusCode === 200) && parsed.token) {
-            resolve(parsed.token);
+          // Если сервер Vercel принял запрос успешно
+          if (res.statusCode === 201 || res.statusCode === 200) {
+            resolve(generatedToken);
           } else {
             reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
           }
@@ -104,7 +108,7 @@ function generateTicketId() {
   return id;
 }
 
-// Кнопка с принудительным FULLSCREEN
+// Кнопка с FULLSCREEN
 function makeWebAppButton(text, url) {
   return { 
     text: text, 
@@ -123,12 +127,14 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
   if (tgUser) await saveSession(tgUser, chatId);
 
+  // Обработка сброса пароля
   if (param.startsWith('reset_')) {
     const user = decodeURIComponent(param.slice(6)).trim();
     userStates[chatId] = { state: 'awaiting_new_password', siteUsername: user };
     return bot.sendMessage(chatId, `🔑 <b>Сброс пароля:</b> <code>${user}</code>\nВведите новый пароль (мин. 4 символа):`, { parse_mode: 'HTML' });
   }
 
+  // Обработка привязки аккаунта
   if (param.startsWith('link_')) {
     const user = decodeURIComponent(param.slice(5).split('_').slice(0, -1).join('_')).trim();
     if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в Telegram!');
@@ -145,7 +151,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     }
   }
 
-  // Обновленное сообщение с краткой инфой о поддержке
+  // Обычное приветствие
   bot.sendMessage(chatId, `📦 <b>kbpost</b> — Онлайн\n\nНажмите кнопку для входа.\n<i>Нужна помощь? Используйте /support</i>`, {
     parse_mode: 'HTML',
     reply_markup: { 
@@ -180,6 +186,7 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
 
+  // Обработка рассылки админами
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_broadcast_content') {
     delete adminStates[chatId];
     const sessions = await getAllSessions();
@@ -188,6 +195,7 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, '🏁 Готово!');
   }
 
+  // Обработка ответа поддержки
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_answer') {
     const { ticketId } = adminStates[chatId];
     const t = supportTickets[ticketId];
@@ -200,6 +208,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Обработка ввода нового пароля
   if (userStates[chatId]?.state === 'awaiting_new_password') {
     const user = userStates[chatId].siteUsername;
     if (text.length < 4) return bot.sendMessage(chatId, '❌ Слишком короткий пароль.');
@@ -215,6 +224,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Обработка создания тикета в поддержку
   if (userStates[chatId]?.state === 'awaiting_support_reason') {
     const tid = generateTicketId();
     const uname = msg.from.username ? `@${msg.from.username}` : 'скрыт';
