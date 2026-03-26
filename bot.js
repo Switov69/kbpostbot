@@ -17,7 +17,8 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 // === 2. НАСТРОЙКИ (Environment Variables) ===
 const BOT_TOKEN = process.env.BOT_TOKEN || ''; 
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://kbpost.vercel.app';
-const API_URL    = `${WEBAPP_URL}/api/auth`; // Путь к объединенному API
+// API теперь находится по одному адресу
+const API_URL    = `${WEBAPP_URL}/api/auth`; 
 const BOT_SECRET = process.env.BOT_SECRET || ''; 
 const ADMIN_IDS  = [1746547600, 1946939976];
 
@@ -54,10 +55,10 @@ async function getAllSessions() {
   } catch (err) { return []; }
 }
 
-// === 5. HTTP HELPER ДЛЯ API (FIXED FOR UNIFIED API) ===
+// === 5. HTTP HELPER ДЛЯ API (ПОФИКШЕН) ===
 function createPendingToken(actionType, data) {
   return new Promise((resolve, reject) => {
-    // Теперь передаем action: 'createToken' внутри тела запроса
+    // Передаем action внутри body для универсального обработчика Vercel
     const body = JSON.stringify({ 
       action: 'createToken', 
       actionType, 
@@ -104,9 +105,15 @@ function generateTicketId() {
   return id;
 }
 
-// Кнопка с режимом Fullscreen
+// Кнопка с принудительным FULLSCREEN
 function makeWebAppButton(text, url) {
-  return { text, web_app: { url, mode: 'fullscreen' } };
+  return { 
+    text: text, 
+    web_app: { 
+      url: url,
+      mode: 'fullscreen' 
+    } 
+  };
 }
 
 // === 6. КОМАНДЫ ===
@@ -117,17 +124,15 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
   if (tgUser) await saveSession(tgUser, chatId);
 
-  // Обработка сброса пароля
   if (param.startsWith('reset_')) {
     const user = decodeURIComponent(param.slice(6)).trim();
     userStates[chatId] = { state: 'awaiting_new_password', siteUsername: user };
     return bot.sendMessage(chatId, `🔑 <b>Сброс пароля:</b> <code>${user}</code>\nВведите новый пароль (мин. 4 символа):`, { parse_mode: 'HTML' });
   }
 
-  // Обработка привязки аккаунта
   if (param.startsWith('link_')) {
     const user = decodeURIComponent(param.slice(5).split('_').slice(0, -1).join('_')).trim();
-    if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в настройках Telegram!');
+    if (!tgUser) return bot.sendMessage(chatId, '❌ Установите Username в Telegram!');
     try {
       const token = await createPendingToken('link_tg', { siteUsername: user, tgUsername: tgUser, chatId: String(chatId) });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=link`;
@@ -137,15 +142,15 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       });
     } catch (e) { 
       console.error('API Error:', e.message);
-      return bot.sendMessage(chatId, '❌ Ошибка API. Убедитесь, что сайт и база активны.'); 
+      return bot.sendMessage(chatId, '❌ Ошибка API. Убедитесь, что секреты в Render и Vercel совпадают.'); 
     }
   }
 
-  // Стандартное приветствие
+  // Обновленное сообщение с краткой инфой о поддержке
   bot.sendMessage(chatId, `📦 <b>kbpost</b> — Онлайн\n\nНажмите кнопку для входа.\n<i>Нужна помощь? Используйте /support</i>`, {
     parse_mode: 'HTML',
     reply_markup: { 
-        inline_keyboard: [[makeWebAppButton('📦 Открыть приложение', WEBAPP_URL)]] 
+      inline_keyboard: [[makeWebAppButton('📦 Открыть приложение', WEBAPP_URL)]] 
     }
   });
 });
@@ -176,7 +181,6 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
 
-  // Рассылка
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_broadcast_content') {
     delete adminStates[chatId];
     const sessions = await getAllSessions();
@@ -185,7 +189,6 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, '🏁 Готово!');
   }
 
-  // Ответ админа
   if (ADMIN_IDS.includes(chatId) && adminStates[chatId]?.action === 'awaiting_answer') {
     const { ticketId } = adminStates[chatId];
     const t = supportTickets[ticketId];
@@ -198,10 +201,9 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Смена пароля
   if (userStates[chatId]?.state === 'awaiting_new_password') {
     const user = userStates[chatId].siteUsername;
-    if (text.length < 4) return bot.sendMessage(chatId, '❌ Пароль слишком короткий!');
+    if (text.length < 4) return bot.sendMessage(chatId, '❌ Слишком короткий пароль.');
     try {
       const token = await createPendingToken('reset_password', { siteUsername: user, newPassword: text });
       const url = `${WEBAPP_URL}/#/tg-callback?token=${token}&action=reset`;
@@ -214,7 +216,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Поддержка
   if (userStates[chatId]?.state === 'awaiting_support_reason') {
     const tid = generateTicketId();
     const uname = msg.from.username ? `@${msg.from.username}` : 'скрыт';
