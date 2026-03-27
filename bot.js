@@ -15,9 +15,9 @@ const bcrypt      = require('bcryptjs');
 const https       = require('https');
 
 // ===== КОНФИГ =====
-const BOT_TOKEN  = process.env.BOT_TOKEN  || '8656385676:AAFY7HZ5AhAhDl_60oz3wqczjTOBnPEanzw';
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://kbpost.vercel.app';
-const BOT_SECRET = process.env.BOT_SECRET || '7d5dc33e5de4ea38e964155dbd42ec13';
+const BOT_TOKEN  = process.env.BOT_TOKEN;
+const WEBAPP_URL = process.env.WEBAPP_URL;
+const BOT_SECRET = process.env.BOT_SECRET;
 const DB_URL     = process.env.DATABASE_URL;
 
 if (!DB_URL) {
