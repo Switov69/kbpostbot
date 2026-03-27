@@ -1,0 +1,17 @@
+{
+  "name": "kbpost-bot",
+  "version": "1.0.0",
+  "description": "KBPOST Telegram Bot — Render.com deployment",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "bcryptjs": "^2.4.3",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
